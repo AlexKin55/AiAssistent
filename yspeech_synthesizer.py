@@ -8,16 +8,12 @@ import pygame
 from interfaces import ISpeechSynthesizer
 
 class YandexSpeechKitSynthesizer(ISpeechSynthesizer):
-    """
-    Класс синтеза речи через современный Yandex SpeechKit API v3.
-    Использует потоковую сборку аудио-фрагментов и плеер Pygame.
-    """
+
     def __init__(self, api_key: str, folder_id: str):
         self._secret = api_key
         self._folderId = folder_id
 
     def speak(self, text: str) -> None:
-        """Реализация метода speak для интерфейса ISpeechSynthesizer"""
         if not text or not text.strip():
             return
 

@@ -1,8 +1,10 @@
 opencv-python>=4.8.0.0
 numpy>=1.24.0
-mediapipe>=0.10.0
 deepface>=0.0.79
 scipy>=1.10.0
-sounddevice>=0.4.6
-requests
-pygame
+grpcio>=1.50.0
+grpcio-tools>=1.50.0
+yandexcloud>=0.20.0
+pyaudio>=0.2.13
+requests>=2.31.0
+pygame>=2.5.0

@@ -11,9 +11,5 @@ class IUserManager(ABC):
         pass
 
     @abstractmethod
-    def get_llm_context(self, user_id: str) -> tuple[list[str], list[dict]]:
-        pass
-
-    @abstractmethod
     def add_message_to_history(self, user_id: str, role: str, text: str) -> None:
         pass

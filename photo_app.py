@@ -2,15 +2,18 @@ import cv2
 import time
 import numpy as np
 from deepface import DeepFace
-from interfaces import IFaceApp, IFaceDetector, IUserManager, IRenderer, IConversation, ISpeechSynthesizer
+from interfaces import IFaceApp, IFaceDetector, IUserManager, IRenderer, IConversation, ISpeechSynthesizer, IAudioProcessor, ILLMClient
 
 class PhotoFaceApp(IFaceApp):
-    def __init__(self, detector: IFaceDetector, user_manager: IUserManager, renderer: IRenderer, conversation: IConversation, synthesizer: ISpeechSynthesizer):
+    def __init__(self, detector: IFaceDetector, user_manager: IUserManager, renderer: IRenderer,
+                 conversation: IConversation, synthesizer: ISpeechSynthesizer, audio_processor: IAudioProcessor, llm_client: ILLMClient):
         self.detector = detector
         self.user_manager = user_manager
         self.renderer = renderer
         self.conversation = conversation
         self.synthesizer = synthesizer
+        self.audio_processor = audio_processor
+        self.llm_client = llm_client
         
         self.current_user_name = "Scanning..."
         
@@ -23,24 +26,46 @@ class PhotoFaceApp(IFaceApp):
         self.required_strikes = 5
 
     def _trigger_greeting_event(self, user_id: str):
-        """Вызывается строго один раз при старте новой подтвержденной сессии визита"""
-        print(f"\n[Контроль Сессий] Сессия ПОДТВЕРЖДЕНА для {user_id}. Генерирую приветствие...")
+        """Срабатывает один раз при входе человека в кадр"""
+        print(f"\n[Контроль Сессий] Сессия ПОДТВЕРЖДЕНА для {user_id}. ИИ генерирует приветствие...")
         
         trigger_phrase = "Клиент подошел к стойке и смотрит на тебя. Поприветствуй его согласно контексту."
         prompt_messages = self.conversation.build_prompt_messages(user_id, trigger_phrase)
         
-        interests, _ = self.user_manager.get_llm_context(user_id)
-        if interests:
-            ai_response = f"Рада вас снова видеть! В прошлый раз вы интересовались товаром {interests[-1]}. Скажите, он ещё актуален?"
-        else:
-            ai_response = "Здравствуйте! Добро пожаловать в наш магазин. Чем я могу вам помочь?"
+        ai_response = self.llm_client.generate_response(prompt_messages)
+        print(f"🤖 Алиса: {ai_response}")
         
-        print(f"🤖 ИИ-Продавец: {ai_response}")
         self.synthesizer.speak(ai_response)
-        
         self.user_manager.add_message_to_history(user_id, "assistant", ai_response)
         self.last_seen_timestamp = time.time()
-        print("[Контроль Сессий] Время сессии скорректировано после озвучки.")
+
+
+    def _process_voice_dialogue(self, user_id: str, user_text: str):
+        """Двухэтапный ИИ-конвейер: обработка живой речи пользователя"""
+        print(f"\n[Голосовой Конвейер] Вы сказали: '{user_text}'")
+
+        sql_prompt = self.conversation.build_sql_prompt(user_text)
+        generated_sql = self.llm_client.generate_response(sql_prompt).strip()
+        
+        db_result = []
+        if generated_sql.upper().startswith("SELECT"):
+            print(f"[ИИ Анализ] Сгенерирован SQL-запрос к складу: {generated_sql}")
+            # Делаем прямой безопасный запрос к таблице продуктов через объект user_manager.db
+            db_result = self.user_manager.db.execute_read_query(generated_sql)
+            print(f"[БД SQLite] Результат из таблицы товаров: {db_result}")
+
+        chat_prompt = self.conversation.build_prompt_messages(user_id, user_text)
+
+        if db_result:
+            chat_prompt[-1]["text"] += f"\n(СИСТЕМНАЯ СПРАВКА ИЗ SQLite БД: Результат выполнения SQL-запроса к складу товаров: {db_result})"
+
+        ai_response = self.llm_client.generate_response(chat_prompt)
+        print(f"🤖 Алиса: {ai_response}")
+
+        self.synthesizer.speak(ai_response)
+        self.user_manager.add_message_to_history(user_id, "user", user_text)
+        self.user_manager.add_message_to_history(user_id, "assistant", ai_response)
+        self.last_seen_timestamp = time.time()
 
     def run(self, camera_index: int = 0) -> None:
         cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
@@ -133,6 +158,12 @@ class PhotoFaceApp(IFaceApp):
                             print(f"\n[Контроль Сессий] Превышен лимит отсутствия ({int(time_away)} сек). Сессия для {self.active_session_user} закрыта.")
                             self.active_session_user = None
 
+
+                if self.active_session_user is not None:
+                    recognized_text = self.audio_processor.listen_and_transcribe()
+                    if recognized_text and recognized_text.strip():
+                        self._process_voice_dialogue(self.active_session_user, recognized_text)
+
                 if should_render:
                     self.renderer.render(frame, self.current_user_name, top, right, bottom, left)
                 else:
@@ -144,7 +175,7 @@ class PhotoFaceApp(IFaceApp):
                 if not self.renderer.show_and_check_exit(frame):
                     break
 
-                time.sleep(1.0)
+                time.sleep(0.5)
         finally:
             cap.release()
             self.renderer.close()

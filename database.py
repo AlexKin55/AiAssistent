@@ -30,7 +30,6 @@ class SQLiteFaceDatabase(IFaceDatabase):
             cursor.execute("SELECT user_id, embedding FROM face_embeddings")
             rows = cursor.fetchall()
             for user_id, emb_json in rows:
-                # Превращаем JSON-строку обратно в список float для косинусного сравнения
                 faces_data[user_id] = [json.loads(emb_json)]
         print(f"[БД SQLite] Успешно загружено профилей в ОЗУ: {len(faces_data)}")
         return faces_data

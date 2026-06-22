@@ -39,7 +39,25 @@ class RetailAssistantConversation(IConversation):
 
         return prompt_messages
 
+    def build_sql_prompt(self, user_question: str) -> list[dict]:
+        """Специальный промпт, заставляющий LLM переводить человеческую речь в SQL"""
+        
+        system_instruction = (
+            "Ты — транслятор человеческой речи в SQL-запросы для базы данных SQLite.\n"
+            "В базе данных есть таблица 'products' со следующими колонками:\n"
+            "- product_name (TEXT, название товара, всегда в нижнем регистре, например: 'ведро', 'лопата')\n"
+            "- price (INTEGER, цена товара в рублях)\n"
+            "- stock_count (INTEGER, остаток на складе)\n\n"
+            "ПРАВИЛО: Проанализируй вопрос пользователя и сгенерируй только чистый SQL-запрос SELECT. "
+            "Не пиши никаких пояснений, введений или Markdown-разметки (никаких ```sql). Только текст запроса. "
+            "Название товара в условии WHERE всегда приводи к нижнему регистру."
+        )
 
+        return [
+            {"role": "system", "text": system_instruction},
+            {"role": "user", "text": f"Вопрос: {user_question}\nSQL:"}
+        ]
+    
 """ to use
 # ПРИМЕР ТОГО, КАК КЛАССЫ РАБОТАЮТ ВМЕСТЕ
 
