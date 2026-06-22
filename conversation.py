@@ -4,7 +4,6 @@ class RetailAssistantConversation(IConversation):
     def __init__(self, user_manager: IUserManager, system_instruction: str = None):
         self.user_manager = user_manager
         
-        # Инструкция по умолчанию, если не передана кастомная
         self.system_instruction = system_instruction or (
             "Ты — вежливый и опытный ассистент-продавец в магазине обуви и одежды. "
             "Твоя задача — консультировать клиента, помогать с выбором и мягко предлагать сопутствующие товары. "

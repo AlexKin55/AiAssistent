@@ -3,3 +3,6 @@ numpy>=1.24.0
 mediapipe>=0.10.0
 deepface>=0.0.79
 scipy>=1.10.0
+sounddevice>=0.4.6
+requests
+pygame

@@ -2,40 +2,40 @@ import cv2
 import time
 import numpy as np
 from deepface import DeepFace
-from interfaces import IFaceApp, IFaceDetector, IUserManager, IRenderer, IConversation
+from interfaces import IFaceApp, IFaceDetector, IUserManager, IRenderer, IConversation, ISpeechSynthesizer
 
 class PhotoFaceApp(IFaceApp):
-    def __init__(self, detector: IFaceDetector, user_manager: IUserManager, renderer: IRenderer, conversation: IConversation):
+    def __init__(self, detector: IFaceDetector, user_manager: IUserManager, renderer: IRenderer, conversation: IConversation, synthesizer: ISpeechSynthesizer):
         self.detector = detector
         self.user_manager = user_manager
         self.renderer = renderer
-        self.conversation = conversation  # Интегрируем интерфейс построения промптов
-        
+        self.conversation = conversation
+        self.synthesizer = synthesizer
         self.current_user_name = "Scanning..."
-        
-        # Переменная-память для отслеживания момента входа/смены человека перед экраном
-        self.last_detected_user = None
+        self.active_session_user = None
+        self.last_seen_timestamp = time.time()
+        self.session_timeout = 600.0
 
     def _trigger_greeting_event(self, user_id: str):
-        """Вызывается строго ОДИН РАЗ в момент, когда пользователь сел перед ноутбуком"""
-        print(f"\n[Событие] Клиент {user_id} вошел в фокус камеры.")
+        """Вызывается строго один раз при старте новой сессии визита"""
+        print(f"\n[Контроль Сессий] Открыта НОВАЯ сессия для {user_id}. Генерирую приветствие...")
         
-        # Системная фраза-команда для ИИ
         trigger_phrase = "Клиент подошел к стойке и смотрит на тебя. Поприветствуй его согласно контексту."
-        
-        # Строим промпт, учитывая сценарии (первый визит / интересы / продолжение диалога)
         prompt_messages = self.conversation.build_prompt_messages(user_id, trigger_phrase)
         
-        print("=" * 60)
-        print(f"🤖 [ПРОМПТ ДЛЯ ИИ СФОРМИРОВАН УСПЕШНО]:")
-        for msg in prompt_messages:
-            if msg['role'] == 'system':
-                print(f" -> SYSTEM:\n{msg['text']}\n")
-            else:
-                print(f" -> {msg['role'].upper()}: {msg['text']}")
-        print("=" * 60)
+        interests, _ = self.user_manager.get_llm_context(user_id)
+        if interests:
+            ai_response = f"Рада вас снова видеть! В прошлый раз вы интересовались товаром {interests[-1]}. Скажите, он ещё актуален?"
+        else:
+            ai_response = "Здравствуйте! Добро пожаловать в наш магазин. Чем я могу вам помочь?"
         
-        # Сюда мы передадим prompt_messages в Ollama/YandexGPT, когда подключим их модули
+        print(f"🤖 ИИ-Продавец: {ai_response}")
+        
+        self.synthesizer.speak(ai_response)
+        self.user_manager.add_message_to_history(user_id, "assistant", ai_response)
+        self.last_seen_timestamp = time.time()
+
+        print("[Контроль Сессий] Время сессии скорректировано после озвучки.")
 
     def run(self, camera_index: int = 0) -> None:
         cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
@@ -46,10 +46,11 @@ class PhotoFaceApp(IFaceApp):
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        print("\n=== Запущено PhotoFaceApp (Эко-режим: 1 фото/сек) ===")
+        print(f"\n=== Запущено PhotoFaceApp ===")
+        print(f"[Настройка] Таймаут сессии приветствия: {self.session_timeout / 60} мин.")
+        
         try:
             while cap.isOpened():
-                # Очищаем буфер старых кадров веб-камеры
                 for _ in range(5):
                     cap.grab()
                 
@@ -59,11 +60,8 @@ class PhotoFaceApp(IFaceApp):
 
                 top, right, bottom, left = 0, 0, 0, 0
                 should_render = False
-                
-                # Локальная переменная, чтобы зафиксировать, кого именно мы увидели НА ЭТОМ кадре
                 detected_user_this_frame = None
-
-                # Прямая детекция
+                current_time = time.time()
                 bboxes, face_crops = self.detector.detect_and_encode(frame)
                 
                 if bboxes and face_crops:
@@ -81,8 +79,8 @@ class PhotoFaceApp(IFaceApp):
                             embedding = resp[0]["embedding"] if isinstance(resp, list) else resp["embedding"]
                             self.current_user_name = self.user_manager.identify_or_create(embedding)
                             
-                            # Фиксируем имя распознанного пользователя для текущего кадра
                             detected_user_this_frame = self.current_user_name
+                            self.last_seen_timestamp = current_time
                             
                             x, y, w, h = bbox
                             top, right, bottom, left = y, x + w, y + h, x
@@ -92,31 +90,37 @@ class PhotoFaceApp(IFaceApp):
                 else:
                     self.current_user_name = "No Face"
 
-                # --- УМНАЯ ЛОГИКА ТРИГГЕРА ОБЩЕНИЯ ---
-                # Если текущее состояние пользователя отличается от того, что было секунду назад
-                if detected_user_this_frame != self.last_detected_user:
-                    if detected_user_this_frame is not None:
-                        # Человек появился в кадре — запускаем приветствие
+                if detected_user_this_frame is not None:
+                    if self.active_session_user is None:
+                        self.active_session_user = detected_user_this_frame
+                        self._trigger_greeting_event(detected_user_this_frame)
+                    elif self.active_session_user != detected_user_this_frame:
+                        print(f"\n[Контроль Сессий] Пользователь сменился! Был {self.active_session_user}, стал {detected_user_this_frame}.")
+                        self.active_session_user = detected_user_this_frame
                         self._trigger_greeting_event(detected_user_this_frame)
                     else:
-                        # detected_user_this_frame стал None — значит в кадре пустота "No Face"
-                        print("\n[Событие] Перед ноутбуком пусто, клиент ушел.")
-                    
-                    # Синхронизируем состояние памяти для следующего витка цикла
-                    self.last_detected_user = detected_user_this_frame
+                        pass
+                else:
+                    if self.active_session_user is not None:
+                        time_away = current_time - self.last_seen_timestamp
+                        
+                        if time_away >= self.session_timeout:
+                            print(f"\n[Контроль Сессий] Превышен лимит отсутствия ({int(time_away)} сек). Сессия для {self.active_session_user} закрыта.")
+                            self.active_session_user = None
+                        else:
+                            pass
 
-                # Отрисовка
                 if should_render:
                     self.renderer.render(frame, self.current_user_name, top, right, bottom, left)
                 else:
                     cv2.putText(frame, "No Face Detected", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-                cv2.putText(frame, "Mode: Eco Photo (1 FPS)", (20, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                session_status = f"Session: {self.active_session_user}" if self.active_session_user else "Session: Closed"
+                cv2.putText(frame, session_status, (20, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
                 if not self.renderer.show_and_check_exit(frame):
                     break
 
-                # Отдых для CPU
                 time.sleep(1.0)
         finally:
             cap.release()

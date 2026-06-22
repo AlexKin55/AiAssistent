@@ -12,7 +12,6 @@ class SQLiteFaceDatabase(IFaceDatabase):
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            # Поле purchase_history используем для хранения JSON-списка интересов к товарам
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS face_embeddings (
                     user_id TEXT PRIMARY KEY,
@@ -53,7 +52,6 @@ class SQLiteFaceDatabase(IFaceDatabase):
             cursor.execute("SELECT purchase_history, conversation_history FROM face_embeddings WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
             if row:
-                # Гарантируем, что если в ячейках был None, вернутся валидные JSON-пустышки
                 interests_json = row[0] if row[0] is not None else "[]"
                 history_json = row[1] if row[1] is not None else "[]"
                 return interests_json, history_json
