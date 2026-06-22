@@ -11,14 +11,20 @@ class PhotoFaceApp(IFaceApp):
         self.renderer = renderer
         self.conversation = conversation
         self.synthesizer = synthesizer
+        
         self.current_user_name = "Scanning..."
+        
         self.active_session_user = None
         self.last_seen_timestamp = time.time()
         self.session_timeout = 600.0
 
+        self.pending_new_user = None
+        self.new_user_strike_count = 0
+        self.required_strikes = 5
+
     def _trigger_greeting_event(self, user_id: str):
-        """Вызывается строго один раз при старте новой сессии визита"""
-        print(f"\n[Контроль Сессий] Открыта НОВАЯ сессия для {user_id}. Генерирую приветствие...")
+        """Вызывается строго один раз при старте новой подтвержденной сессии визита"""
+        print(f"\n[Контроль Сессий] Сессия ПОДТВЕРЖДЕНА для {user_id}. Генерирую приветствие...")
         
         trigger_phrase = "Клиент подошел к стойке и смотрит на тебя. Поприветствуй его согласно контексту."
         prompt_messages = self.conversation.build_prompt_messages(user_id, trigger_phrase)
@@ -30,11 +36,10 @@ class PhotoFaceApp(IFaceApp):
             ai_response = "Здравствуйте! Добро пожаловать в наш магазин. Чем я могу вам помочь?"
         
         print(f"🤖 ИИ-Продавец: {ai_response}")
-        
         self.synthesizer.speak(ai_response)
+        
         self.user_manager.add_message_to_history(user_id, "assistant", ai_response)
         self.last_seen_timestamp = time.time()
-
         print("[Контроль Сессий] Время сессии скорректировано после озвучки.")
 
     def run(self, camera_index: int = 0) -> None:
@@ -47,7 +52,7 @@ class PhotoFaceApp(IFaceApp):
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
         print(f"\n=== Запущено PhotoFaceApp ===")
-        print(f"[Настройка] Таймаут сессии приветствия: {self.session_timeout / 60} мин.")
+        print(f"[Настройка] Защита от дребезга лиц: {self.required_strikes} сек.")
         
         try:
             while cap.isOpened():
@@ -62,6 +67,7 @@ class PhotoFaceApp(IFaceApp):
                 should_render = False
                 detected_user_this_frame = None
                 current_time = time.time()
+
                 bboxes, face_crops = self.detector.detect_and_encode(frame)
                 
                 if bboxes and face_crops:
@@ -80,7 +86,6 @@ class PhotoFaceApp(IFaceApp):
                             self.current_user_name = self.user_manager.identify_or_create(embedding)
                             
                             detected_user_this_frame = self.current_user_name
-                            self.last_seen_timestamp = current_time
                             
                             x, y, w, h = bbox
                             top, right, bottom, left = y, x + w, y + h, x
@@ -91,31 +96,49 @@ class PhotoFaceApp(IFaceApp):
                     self.current_user_name = "No Face"
 
                 if detected_user_this_frame is not None:
+                    self.last_seen_timestamp = current_time
+
                     if self.active_session_user is None:
                         self.active_session_user = detected_user_this_frame
+                        self.pending_new_user = None
+                        self.new_user_strike_count = 0
                         self._trigger_greeting_event(detected_user_this_frame)
-                    elif self.active_session_user != detected_user_this_frame:
-                        print(f"\n[Контроль Сессий] Пользователь сменился! Был {self.active_session_user}, стал {detected_user_this_frame}.")
-                        self.active_session_user = detected_user_this_frame
-                        self._trigger_greeting_event(detected_user_this_frame)
+                        
+                    elif self.active_session_user == detected_user_this_frame:
+                        self.pending_new_user = None
+                        self.new_user_strike_count = 0
+                        
                     else:
-                        pass
+                        if detected_user_this_frame != self.pending_new_user:
+                            self.pending_new_user = detected_user_this_frame
+                            self.new_user_strike_count = 1
+                            print(f"[Контроль Дребезга] Замечен потенциальный новый ID: {detected_user_this_frame}. Проверка стабильности (1/{self.required_strikes})...")
+                        else:
+                            self.new_user_strike_count += 1
+                            print(f"[Контроль Дребезга] ID {detected_user_this_frame} стабилен ({self.new_user_strike_count}/{self.required_strikes})")
+                            
+                            if self.new_user_strike_count >= self.required_strikes:
+                                print(f"\n[Контроль Сессий] Смена подтверждена! Сессия {self.active_session_user} закрыта. Новый клиент: {detected_user_this_frame}.")
+                                self.active_session_user = detected_user_this_frame
+                                self.pending_new_user = None
+                                self.new_user_strike_count = 0
+                                self._trigger_greeting_event(detected_user_this_frame)
                 else:
+                    self.pending_new_user = None
+                    self.new_user_strike_count = 0
+
                     if self.active_session_user is not None:
                         time_away = current_time - self.last_seen_timestamp
-                        
                         if time_away >= self.session_timeout:
                             print(f"\n[Контроль Сессий] Превышен лимит отсутствия ({int(time_away)} сек). Сессия для {self.active_session_user} закрыта.")
                             self.active_session_user = None
-                        else:
-                            pass
 
                 if should_render:
                     self.renderer.render(frame, self.current_user_name, top, right, bottom, left)
                 else:
                     cv2.putText(frame, "No Face Detected", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-                session_status = f"Session: {self.active_session_user}" if self.active_session_user else "Session: Closed"
+                session_status = f"Active Session: {self.active_session_user}" if self.active_session_user else "Session: Closed"
                 cv2.putText(frame, session_status, (20, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
                 if not self.renderer.show_and_check_exit(frame):
