@@ -1,44 +1,56 @@
-# renderer.py
-import cv2
-import numpy as np
 from interfaces import IRenderer
 
-class OpenCvRenderer(IRenderer):
-    """Реализация вывода графики с помощью стандартных окон OpenCV."""
+import cv2
+import numpy as np
 
-    def __init__(self, window_name: str = "Face ID System"):
+class OpenCVRenderer(IRenderer):
+    def __init__(self, window_name: str = "Smart Face App"):
         self.window_name = window_name
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
 
     def render(self, frame: np.ndarray, name: str, top: int, right: int, bottom: int, left: int) -> None:
-        # Зеленый цвет для рамки (формат BGR)
-        accent_color = (0, 255, 0)
+        if frame is None or frame.size == 0:
+            return
+
+        box_color = (0, 255, 0)
         text_color = (255, 255, 255)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        thickness = 2
 
-        # 1. Рисуем рамку квадратом вокруг лица
-        cv2.rectangle(frame, (left, top), (right, bottom), accent_color, 2)
+        cv2.rectangle(frame, (left, top), (right, bottom), box_color, thickness)
 
-        # 2. Рисуем заполненную плашку под текст подбородка
-        cv2.rectangle(frame, (left, bottom - 30), (right, bottom), accent_color, cv2.FILLED)
+        label_size, _ = cv2.getTextSize(name, font, font_scale, thickness)
+        text_w, text_h = label_size[0], label_size[1]
+        
+        cv2.rectangle(
+            frame, 
+            (left, top - text_h - 12), 
+            (left + text_w + 6, top), 
+            box_color, 
+            cv2.FILLED
+        )
 
-        # 3. Пишем имя пользователя на плашке
         cv2.putText(
             frame, 
             name, 
-            (left + 6, bottom - 6), 
-            cv2.FONT_HERSHEY_DUPLEX, 
-            0.7, 
+            (left + 3, top - 5), 
+            font, 
+            font_scale, 
             text_color, 
-            1
+            thickness, 
+            cv2.LINE_AA
         )
 
     def show_and_check_exit(self, frame: np.ndarray) -> bool:
-        # Показываем обработанный кадр в окне
-        cv2.imshow(self.window_name, frame)
-        
-        # Если нажата клавиша 'q', возвращаем True (сигнал к выходу)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            return True
-        return False
+        if frame is not None and frame.size > 0:
+            cv2.imshow(self.window_name, frame)
+            
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == ord('q') or key == 27:
+            return False
+        return True
 
     def close(self) -> None:
         cv2.destroyAllWindows()

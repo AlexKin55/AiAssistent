@@ -1,60 +1,35 @@
-# user_manager.py
-import numpy as np
-# Импортируем интерфейсы программы
-from interfaces import IUserManager, IFaceDatabase
+from interfaces import IUserManager
+from scipy.spatial import distance
 
+class DynamicUserManager(IUserManager):
+    def __init__(self, threshold: float = 0.55, max_templates_per_user: int = 5):
+        self.known_faces = {}  
+        self.next_user_id = 1
+        self.threshold = threshold
+        self.max_templates_per_user = max_templates_per_user
 
-class AutoUserManager(IUserManager):
-    """
-    Реализация менеджера пользователей, который автоматически распознает 
-    людей или регистрирует их "на лету" под именами User_N.
-    """
+    def identify_or_create(self, embedding: list[float]) -> str:
+        best_match_id = None
+        min_dist = 1.0
 
-    def __init__(self, db: IFaceDatabase, tolerance: float = 0.3):
-        """
-        Args:
-            db (IFaceDatabase): Любая база данных, реализующая контракт интерфейса.
-            tolerance (float): Порог строгости сравнения для Евклидова расстояния.
-                               Значение 0.3–0.4 оптимально для векторов DeepFace.
-        """
-        self.db = db
-        self.tolerance = tolerance
-        
-        # Загружаем базу из SQLite в оперативную память (кэш)
-        self.known_encodings, self.known_names = self.db.load_all()
-        self._next_id = len(self.known_names) + 1
+        for user_id, embeddings in self.known_faces.items():
+            for known_emb in embeddings:
+                dist = distance.cosine(embedding, known_emb)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_match_id = user_id
 
-    def identify_or_register(self, face_encoding: np.ndarray) -> str:
-        """
-        Проверяет лицо по кэшу. Возвращает имя или создает новый профиль.
-        """
-        if len(self.known_encodings) > 0:
-            distances = []
+        if min_dist < self.threshold:
+            if len(self.known_faces[best_match_id]) < self.max_templates_per_user:
+                self.known_faces[best_match_id].append(embedding)
             
-            # Считаем Евклидово расстояние (L2) между вектором с камеры и базой данных
-            # Чистая математика через NumPy работает на уровне C и быстрее любых внешних библиотек
-            for known_encoding in self.known_encodings:
-                dist = np.linalg.norm(face_encoding - known_encoding)
-                distances.append(dist)
+            print(f"[INFO] A Face was recognized: {best_match_id}")
+            return f"User_{best_match_id}"
+        else:
+            self.known_faces[self.next_user_id] = [embedding]
+            assigned_name = f"User_{self.next_user_id}"
             
-            if len(distances) > 0:
-                # Находим индекс самого похожего человека (минимальное расстояние)
-                best_match_index = np.argmin(distances)
-                
-                # Если расстояние укладывается в порог — человек успешно распознан
-                if distances[best_match_index] <= self.tolerance:
-                    return self.known_names[best_match_index]
-
-        # АВТОЗАПОМИНАНИЕ: Если лицо новое
-        new_name = f"User_{self._next_id}"
-        self._next_id += 1
-        
-        # Обновляем кэш в оперативной памяти
-        self.known_encodings.append(face_encoding)
-        self.known_names.append(new_name)
-        
-        # Сохраняем в физическую БД SQLite через интерфейс
-        self.db.save(new_name, face_encoding)
-        
-        print(f"[UserManager] Запомнил новое лицо как: {new_name}")
-        return new_name
+            print(f"[INFO] A new Face was registered: {assigned_name}")
+            self.next_user_id += 1
+            
+            return assigned_name

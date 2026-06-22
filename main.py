@@ -1,21 +1,25 @@
-# main.py
-from database import SQLiteFaceDatabase
-from detector import DeepFaceDetector
-from user_manager import AutoUserManager
-from renderer import OpenCvRenderer  # Добавили импорт
-from face_app import FaceApp
+from detector import MediaPipeLightDetector
+from facetracker import OpenCVKCFTracker
+from renderer import OpenCVRenderer
+from user_manager import DynamicUserManager
 
-def main():
-    database = SQLiteFaceDatabase("faces_bio.db")
-    detector = DeepFaceDetector(resize_factor=0.25)
-    user_manager = AutoUserManager(database, tolerance=0.5)
-    
-    # Создаем экземпляр нашего нового класса отрисовки
-    renderer = OpenCvRenderer(window_name="Face ID System")
+# Импортируем две разные стратегии работы приложения
+from video_app import VideoFaceApp
+from photo_app import PhotoFaceApp
 
-    # Передаем рендерер в приложение
-    app = FaceApp(detector=detector, user_manager=user_manager, renderer=renderer)
+def main() -> None:
+    # 1. Сборка общих зависимостей
+    detector_impl = MediaPipeLightDetector(min_detection_confidence=0.82)
+    tracker_impl = OpenCVKCFTracker()
+    renderer_impl = OpenCVRenderer(window_name="Smart Face Pipeline")
+    user_manager_impl = DynamicUserManager(threshold=0.55, max_templates_per_user=5)
+
+    # Режим А: Видео 30 FPS с трекером (Нагрузка на CPU выше)
+    # app = VideoFaceApp(detector_impl, user_manager_impl, renderer_impl, tracker_impl)
     
+    # Режим Б: Фото 1 FPS (Нагрузка на CPU минимальна, кулеры молчат)
+    app = PhotoFaceApp(detector_impl, user_manager_impl, renderer_impl)
+
     app.run(camera_index=0)
 
 if __name__ == "__main__":

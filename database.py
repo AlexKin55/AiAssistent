@@ -1,10 +1,8 @@
-# database.py
 import sqlite3
 import numpy as np
 from interfaces import IFaceDatabase
 
 class SQLiteFaceDatabase(IFaceDatabase):
-    """Реализация хранилища векторов лиц на базе СУБД SQLite."""
     def __init__(self, db_path: str = "faces_bio.db"):
         self.db_path = db_path
         self._init_db()
