@@ -5,7 +5,6 @@ from deepface import DeepFace
 from interfaces import IFaceApp, IFaceDetector, IUserManager, IRenderer
 
 class PhotoFaceApp(IFaceApp):
-    """Энергосберегающая реализация: анализ кадра раз в секунду (Без трекера)"""
     def __init__(self, detector: IFaceDetector, user_manager: IUserManager, renderer: IRenderer):
         self.detector = detector
         self.user_manager = user_manager
